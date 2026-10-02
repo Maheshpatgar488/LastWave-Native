@@ -45,20 +45,25 @@ jobs:
       - name: Build APK
         run: ./gradlew assembleRelease
 
-      - name: Sign APK
+      - name: Align and Sign APK
         run: |
           keytool -genkeypair -v -keystore release.jks -alias lastwave \
             -keyalg RSA -keysize 2048 -validity 10000 \
             -storepass android -keypass android \
             -dname "CN=LastWave, OU=Fork, O=App, L=Local, S=State, C=IN"
 
-          APK_UNSIGNED=$(find app/build/outputs/apk/ -name "*.apk" | head -n 1)
+          APK_RAW=$(find app/build/outputs/apk/ -name "*.apk" | head -n 1)
+
+          # Align the APK (Fixes "package appears to be invalid")
+          $ANDROID_HOME/build-tools/35.0.0/zipalign -v -p 4 "$APK_RAW" aligned.apk
+
+          # Sign the aligned APK
           $ANDROID_HOME/build-tools/35.0.0/apksigner sign \
             --ks release.jks \
             --ks-pass pass:android \
             --key-pass pass:android \
             --out LastWave-Spotify.apk \
-            "$APK_UNSIGNED"
+            aligned.apk
 
       - name: Upload APK to Releases
         uses: softprops/action-gh-release@v2
