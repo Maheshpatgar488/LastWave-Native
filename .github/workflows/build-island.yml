@@ -1,4 +1,4 @@
-name: Build & Release LastWave
+name: Build Spotify LastWave
 
 on:
   workflow_dispatch:
