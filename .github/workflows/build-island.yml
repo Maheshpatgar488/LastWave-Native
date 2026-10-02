@@ -54,7 +54,7 @@ jobs:
 
           APK_RAW=$(find app/build/outputs/apk/ -name "*.apk" | head -n 1)
 
-          # Align the APK (Fixes "package appears to be invalid")
+          # Align APK to 4-byte boundaries (Fixes "package appears to be invalid")
           $ANDROID_HOME/build-tools/35.0.0/zipalign -v -p 4 "$APK_RAW" aligned.apk
 
           # Sign the aligned APK
