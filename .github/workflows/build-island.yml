@@ -2,11 +2,6 @@ name: Build & Release LastWave
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - 'app/**'
 
 permissions:
   contents: write
@@ -18,6 +13,22 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          repository: Clash-Projects/LastWave-Native
+          fetch-depth: 0
+
+      - name: Checkout Latest Official Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG=$(gh release view -R Clash-Projects/LastWave-Native --json tagName -q .tagName)
+          echo "Checking out official release tag: $TAG"
+          git checkout "$TAG"
+
+      - name: Set Spotify Package Name & Disable Signing Check
+        run: |
+          sed -i 's/applicationId = "com.lastwave.app"/applicationId = "com.spotify.music"/g' app/build.gradle.kts
+          sed -i 's/signingConfig = signingConfigs/ \/\/ signingConfig = signingConfigs/g' app/build.gradle.kts
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -31,10 +42,10 @@ jobs:
       - name: Grant Execute Permission
         run: chmod +x gradlew
 
-      - name: Build Release APK
-        run: ./gradlew assembleRelease
+      - name: Build APK
+        run: ./gradlew assembleRelease -x validateSigningRelease
 
-      - name: Sign APK (Self-Signed)
+      - name: Sign APK
         run: |
           keytool -genkeypair -v -keystore release.jks -alias lastwave \
             -keyalg RSA -keysize 2048 -validity 10000 \
@@ -46,16 +57,16 @@ jobs:
             --ks release.jks \
             --ks-pass pass:android \
             --key-pass pass:android \
-            --out LastWave-OriginIsland.apk \
+            --out LastWave-Spotify.apk \
             "$APK_UNSIGNED"
 
-      - name: Create GitHub Release
+      - name: Upload APK to Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ github.run_number }}
-          name: LastWave OriginIsland v${{ github.run_number }}
+          tag_name: v${{ github.run_number }}-spotify
+          name: LastWave Spotify Origin v${{ github.run_number }}
           draft: false
           prerelease: false
-          files: LastWave-OriginIsland.apk
+          files: LastWave-Spotify.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
