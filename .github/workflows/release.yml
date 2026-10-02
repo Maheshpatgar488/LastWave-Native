@@ -1,193 +1,64 @@
-name: Publish Selected Release
+name: Build & Release LastWave
 
 on:
   workflow_dispatch:
-    inputs:
-      tag_name:
-        description: 'Git Tag (e.g., 4.2.2)'
-        required: true
-        default: '4.2.2'
-      release_name:
-        description: 'Release Title (e.g., LastWave 4.2.2)'
-        required: true
-        default: 'Update v4.2.2'
-      release_notes:
-        description: 'Changelog / Release Notes'
-        required: false
-        default: ''
+
+permissions:
+  contents: write
 
 jobs:
-  release:
-    name: Build & Publish Release
+  build-and-release:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
-      ADDON_CLIENT_SECRET: ${{ secrets.ADDON_CLIENT_SECRET }}
-      RELEASE_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD || secrets.RELEASE_STORE_PASSWORD }}
 
     steps:
-      - name: Checkout code
+      - name: Checkout Stable Code
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag_name }}
-          fetch-depth: 0
+          repository: Clash-Projects/LastWave-Native
+          ref: v1.0.8
+
+      - name: Set Spotify Package Name & Disable Signing Check
+        run: |
+          sed -i 's/applicationId = "com.lastwave.app"/applicationId = "com.spotify.music"/g' app/build.gradle.kts
+          sed -i 's/signingConfig = signingConfigs/ \/\/ signingConfig = signingConfigs/g' app/build.gradle.kts
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
           distribution: 'temurin'
-          cache: gradle
+          java-version: '17'
 
-      - name: Grant Gradle execute permission
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Grant Execute Permission
         run: chmod +x gradlew
 
-      - name: Build Android 10 Release APKs (compressed + raw)
-        env:
-          ADDON_CLIENT_SECRET: ${{ secrets.ADDON_CLIENT_SECRET }}
-          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
-          RELEASE_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD || secrets.RELEASE_STORE_PASSWORD }}
-          RELEASE_KEY_ALIAS: ${{ secrets.ALIAS || secrets.RELEASE_KEY_ALIAS || 'release_key' }}
-          RELEASE_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || secrets.RELEASE_KEY_PASSWORD }}
-        run: ./gradlew assembleRelease assembleRawRelease --stacktrace
+      - name: Build APK
+        run: ./gradlew assembleRelease -x validateSigningRelease
 
-      - name: Sign Release APK with Custom Key (Optional)
-        if: env.SIGNING_KEY != ''
-        uses: r0adkll/sign-android-release@v1
-        id: sign_app
-        with:
-          releaseDirectory: app/build/outputs/apk/release
-          signingKeyBase64: ${{ secrets.SIGNING_KEY }}
-          alias: ${{ secrets.ALIAS || secrets.RELEASE_KEY_ALIAS || 'release_key' }}
-          keyStorePassword: ${{ secrets.KEY_STORE_PASSWORD || secrets.RELEASE_STORE_PASSWORD }}
-          keyPassword: ${{ secrets.KEY_PASSWORD || secrets.RELEASE_KEY_PASSWORD }}
-        env:
-          BUILD_TOOLS_VERSION: "34.0.0"
-
-      - name: Sign Raw APK with Custom Key (Optional)
-        if: env.SIGNING_KEY != ''
-        uses: r0adkll/sign-android-release@v1
-        id: sign_app_raw
-        with:
-          releaseDirectory: app/build/outputs/apk/rawRelease
-          signingKeyBase64: ${{ secrets.SIGNING_KEY }}
-          alias: ${{ secrets.ALIAS || secrets.RELEASE_KEY_ALIAS || 'release_key' }}
-          keyStorePassword: ${{ secrets.KEY_STORE_PASSWORD || secrets.RELEASE_STORE_PASSWORD }}
-          keyPassword: ${{ secrets.KEY_PASSWORD || secrets.RELEASE_KEY_PASSWORD }}
-        env:
-          BUILD_TOOLS_VERSION: "34.0.0"
-
-      - name: Stage Android 10 Final APKs
+      - name: Sign APK
         run: |
-          mkdir -p final_apk
-          TAG="${{ inputs.tag_name }}"
-          # Universal release (Android 10+, R8 + ProGuard + shrinkResources)
-          if [ -f "app/build/outputs/apk/release/app-release-signed.apk" ]; then
-            cp app/build/outputs/apk/release/app-release-signed.apk final_apk/LastWave-v${TAG}-universal.apk
-          else
-            cp app/build/outputs/apk/release/app-release.apk final_apk/LastWave-v${TAG}-universal.apk
-          fi
-          # Universal uncompressed variant (Android 10+, raw debuggable/unminified)
-          if [ -f "app/build/outputs/apk/rawRelease/app-rawRelease-signed.apk" ]; then
-            cp app/build/outputs/apk/rawRelease/app-rawRelease-signed.apk final_apk/LastWave-v${TAG}-universal-uncompressed.apk
-          else
-            cp app/build/outputs/apk/rawRelease/app-rawRelease.apk final_apk/LastWave-v${TAG}-universal-uncompressed.apk
-          fi
-          rm -rf app/build/outputs/apk/release/*
+          keytool -genkeypair -v -keystore release.jks -alias lastwave \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass android -keypass android \
+            -dname "CN=LastWave, OU=Fork, O=App, L=Local, S=State, C=IN"
 
-      - name: Build Android 7.0 Legacy APK (compressed)
-        env:
-          ADDON_CLIENT_SECRET: ${{ secrets.ADDON_CLIENT_SECRET }}
-          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
-          RELEASE_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD || secrets.RELEASE_STORE_PASSWORD }}
-          RELEASE_KEY_ALIAS: ${{ secrets.ALIAS || secrets.RELEASE_KEY_ALIAS || 'release_key' }}
-          RELEASE_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || secrets.RELEASE_KEY_PASSWORD }}
-        run: ./gradlew assembleRelease -PminSdk=24 --stacktrace
+          APK_UNSIGNED=$(find app/build/outputs/apk/ -name "*.apk" | head -n 1)
+          $ANDROID_HOME/build-tools/35.0.0/apksigner sign \
+            --ks release.jks \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --out LastWave-Spotify.apk \
+            "$APK_UNSIGNED"
 
-      - name: Sign Android 7 Legacy APK with Custom Key (Optional)
-        if: env.SIGNING_KEY != ''
-        uses: r0adkll/sign-android-release@v1
-        id: sign_app_legacy
-        with:
-          releaseDirectory: app/build/outputs/apk/release
-          signingKeyBase64: ${{ secrets.SIGNING_KEY }}
-          alias: ${{ secrets.ALIAS || secrets.RELEASE_KEY_ALIAS || 'release_key' }}
-          keyStorePassword: ${{ secrets.KEY_STORE_PASSWORD || secrets.RELEASE_STORE_PASSWORD }}
-          keyPassword: ${{ secrets.KEY_PASSWORD || secrets.RELEASE_KEY_PASSWORD }}
-        env:
-          BUILD_TOOLS_VERSION: "34.0.0"
-
-      - name: Stage Android 7 Final APK
-        run: |
-          TAG="${{ inputs.tag_name }}"
-          if [ -f "app/build/outputs/apk/release/app-release-signed.apk" ]; then
-            cp app/build/outputs/apk/release/app-release-signed.apk final_apk/LastWave-v${TAG}-android7.apk
-          else
-            cp app/build/outputs/apk/release/app-release.apk final_apk/LastWave-v${TAG}-android7.apk
-          fi
-          ls -lh final_apk/
-
-      - name: Verify APK signatures + publish checksums
-        run: |
-          # Never publish a package the installer will reject as invalid.
-          SDKROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          APKSIGNER=$(find "$SDKROOT/build-tools" -maxdepth 2 -name apksigner 2>/dev/null | head -n1)
-          if [ -z "$APKSIGNER" ]; then
-            echo "::warning::apksigner not found under $SDKROOT, skipping signature verification"
-          else
-            for apk in final_apk/*.apk; do
-              echo "Verifying $apk ..."
-              "$APKSIGNER" verify --print-certs "$apk" > /dev/null || { echo "::error::APK failed signature verification: $apk"; exit 1; }
-            done
-            echo "All APK signatures valid."
-          fi
-          (cd final_apk && sha256sum *.apk > SHA256SUMS.txt)
-          cat final_apk/SHA256SUMS.txt
-
-      - name: Prepare Release Notes & Compatibility Notice
-        env:
-          TAG: ${{ inputs.tag_name }}
-          NOTES: ${{ inputs.release_notes }}
-        run: |
-          cat << 'EOF' | sed 's/^ *//' > notice.md
-          ### 📦 Download Packages & Compatibility
-
-          | Package | Recommended OS | Description |
-          | :--- | :--- | :--- |
-          | **`LastWave-v__TAG__-universal.apk`** (~22 MB) | **Android 10+ (Android 10 – 16+)** | **Standard Recommended Release.** R8-optimized with uncompressed page-aligned native libraries for instant memory mapping. |
-          | **`LastWave-v__TAG__-universal-uncompressed.apk`** (~89 MB) | **Android 10+ (Android 10 – 16+)** | **Raw Release.** Unminified debuggable variant with uncompressed native libraries. |
-          | **`LastWave-v__TAG__-android7.apk`** (~17 MB) | **Android 7.0 – 9.0 (Legacy)** | **Legacy Android 7.0+ Variant.** Built with compressed native libraries for older package managers. |
-
-          > [!WARNING]
-          > **Notice for Android 7.0 – 9.0 Users (`LastWave-v__TAG__-android7.apk`):**
-          > - Hardware GPU glassmorphism / live blur requires Android 12+ and is automatically replaced with translucent dark canvas acrylic styling on older devices.
-          > - The media notification uses classic Android media controls rather than Android 13's wavy-progress player.
-          > - For any device running Android 10 or newer, please install the standard **`LastWave-v__TAG__-universal.apk`** for optimal performance and memory efficiency.
-          EOF
-
-          sed -i "s/__TAG__/${TAG}/g" notice.md
-
-          if echo "$NOTES" | grep -q "android7"; then
-            printf "%s\n" "$NOTES" > release_body.md
-          elif [ -n "$NOTES" ]; then
-            printf "%s\n\n---\n\n" "$NOTES" > release_body.md
-            cat notice.md >> release_body.md
-          else
-            cat notice.md > release_body.md
-          fi
-
-      - name: Create GitHub Release
+      - name: Upload APK to Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.tag_name }}
-          name: ${{ inputs.release_name }}
-          body_path: release_body.md
-          files: |
-            final_apk/*.apk
-            final_apk/SHA256SUMS.txt
+          tag_name: v${{ github.run_number }}-spotify
+          name: LastWave Spotify Origin v${{ github.run_number }}
           draft: false
           prerelease: false
+          files: LastWave-Spotify.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
