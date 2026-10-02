@@ -57,8 +57,8 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.spotify.music"
-        minSdk = (project.findProperty("minSdk") as? String)?.toIntOrNull() ?: 29
+    applicationId = "com.spotify.music" // Set to Spotify
+    minSdk = 29
         targetSdk = 35
         versionCode = 22
         versionName = "4.2.2"
@@ -125,7 +125,7 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("release_config")
+            // signingConfig = signingConfigs.getByName("release_config")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         create("rawRelease") {
